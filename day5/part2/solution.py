@@ -6,12 +6,17 @@ Mapping = typing.NamedTuple(
 
 
 def parse_input():
-    with open("sample.txt") as f:
+    with open("input.txt") as f:
         text = f.read()
 
     seeds_text, *maps_text = text.split("\n\n")
 
-    seeds = [int(i.strip()) for i in seeds_text.removeprefix("seeds: ").split(" ")]
+    seeds_ranges = []
+    seeds_values = seeds_text.split(" ")[1:]
+    for i in range(0, len(seeds_values), 2):
+        seeds_ranges.append(
+            (int(seeds_values[i]), int(seeds_values[i]) + int(seeds_values[i + 1]) - 1)
+        )
 
     maps = []
     for map_text in maps_text:
@@ -26,85 +31,201 @@ def parse_input():
 
         maps.append(mappings)
 
-    return seeds, maps
+    return seeds_ranges, maps
 
 
-seeds, maps = parse_input()
+def verify_invariant(union: list[tuple[int, int]]):
+    for i in range(1, len(union) - 1):
+        assert union[i - 1][1] < union[i][0]
+        assert union[i][1] < union[i + 1][0]
 
 
-def compute_intersection(intervals: set[tuple[int, int]]) -> list[tuple[int, int]]:
+def compute_union(intervals: set[tuple[int, int]]) -> list[tuple[int, int]]:
     "Given a set of intervals, return an ordered list of non-overlapping intervals."
-    intersection: list[tuple[int, int]] = []
+    union: list[tuple[int, int]] = []
     for interval in intervals:
-        # find the index of the first intersection-interval with an end greater than this one's start
-        for i, candidate in enumerate(intersection):
+        # print(f"Considering interval: {interval}\tUnion: {union}")
+
+        # find the index of the first union-interval with an end greater than this one's start
+        for i, candidate in enumerate(union):
             if candidate[1] >= interval[0]:
+                # print(f"\tIdentified first potential overlap: {candidate}")
                 first_overlap = i
                 break
         else:
+            # print(f"\tNo first overlap identified")
             first_overlap = None
 
-        # find the index of the last intersection-interval with a start less than this one's end
-        for i, candidate in reversed(list(enumerate(intersection))):
+        # find the index of the last union-interval with a start less than this one's end
+        for i, candidate in reversed(list(enumerate(union))):
             if candidate[0] <= interval[1]:
+                # print(f"\tIdentified last potential overlap: {candidate}")
                 last_overlap = i
                 break
         else:
+            # print(f"\tNo last overlap identified")
             last_overlap = None
 
-        if first_overlap is None:
+        if last_overlap is None:
             # this is to the left of all existing intervals, and does not overlap
-            intersection.insert(0, interval)
-        elif last_overlap is None:
+            union.insert(0, interval)
+        elif first_overlap is None:
             # this is to the right of all existing intervals, and does not overlap
-            intersection.append(interval)
+            union.append(interval)
         elif last_overlap < first_overlap:
             # no intervals overlap this interval
             # insert it after last_overlap
             assert last_overlap + 1 == first_overlap
-            intersection.insert(last_overlap + 1, interval)
+            union.insert(last_overlap + 1, interval)
         else:
             # we are overlapping intervals and need to merge them
             # this also handles if we overlap a single interval and extend it (i.e., first_overlap == last_overlap)
-            new_min = min(intersection[first_overlap][0], interval[0])
-            new_max = max(intersection[last_overlap][1], interval[1])
+            new_min = min(union[first_overlap][0], interval[0])
+            new_max = max(union[last_overlap][1], interval[1])
 
             # extend the first interval
-            intersection[first_overlap] = (new_min, new_max)
-            intersection = (
-                intersection[: first_overlap + 1] + intersection[last_overlap:]
+            union[first_overlap] = (new_min, new_max)
+            union = union[: first_overlap + 1] + union[last_overlap + 1 :]
+
+        # print(f"\tResult: {union}")
+        verify_invariant(union)
+
+    return union
+
+
+def remove_intervals(outer: tuple[int, int], intervals: list[tuple[int, int]]):
+    print(f"\t{outer} - {intervals} = ???")
+    negated = []
+
+    if outer[1] < intervals[0][0] or outer[0] > intervals[-1][1]:
+        print(f"\t\tIntervals do not overlap input range at all -> [{outer}]")
+        return [outer]
+
+    if outer[0] < intervals[0][0] <= outer[1]:
+        print(
+            f"\t\tAdding portion left of first interval: {(outer[0], intervals[0][0] - 1)}"
+        )
+        negated.append((outer[0], intervals[0][0] - 1))
+
+    for before, after in zip(intervals[:-1], intervals[1:]):
+        remaining = (before[1] + 1, after[0] - 1)
+        print(f"\t\tConsidering interval gap {remaining}")
+
+        if remaining[0] <= outer[0] <= outer[1] <= remaining[1]:
+            print(f"\t\t\tInterval entirely within {outer}")
+            negated.append(outer)
+        elif outer[0] <= remaining[0] <= outer[1] <= remaining[1]:
+            print(f"\t\t\tInterval to left of {outer}")
+            negated.append((remaining[0], outer[1]))
+        elif remaining[0] <= outer[0] <= remaining[1] <= outer[1]:
+            print(f"\t\t\tInterval to right of {outer}")
+            negated.append((outer[0], remaining[1]))
+        elif outer[0] <= remaining[0] <= remaining[1] <= outer[1]:
+            print(f"\t\t\tInterval entirely within {outer}")
+            negated.append(remaining)
+
+    if outer[0] <= intervals[-1][1] < outer[1]:
+        print(
+            f"\t\tAdding portion right of last interval: {(intervals[-1][1] + 1, outer[1])}"
+        )
+        negated.append((intervals[-1][1] + 1, outer[1]))
+
+    verify_invariant(negated)
+    print(f"\t\t\t-> {negated}")
+    return negated
+
+
+def map_range(map: set[Mapping], range: tuple[int, int]) -> set[tuple[int, int]]:
+    # order the mappings in the "from" range
+    mappings = sorted(map, key=lambda mapping: mapping.from_start)
+    # find the intervals in the range-to-map not covered by the mappings
+    null_mapping = remove_intervals(
+        range,
+        compute_union(
+            set(
+                (mapping.from_start, mapping.from_start + mapping.length)
+                for mapping in mappings
+            )
+        ),
+    )
+
+    mapped_ranges = set(null_mapping)
+
+    for mapping in mappings:
+        if (
+            mapping.from_start
+            <= range[0]
+            <= range[1]
+            <= mapping.from_start + mapping.length
+        ):
+            # Map only the range contained within
+            mapped_ranges.add(
+                (
+                    (range[0] - mapping.from_start) + mapping.to_start,
+                    (range[1] - mapping.from_start) + mapping.to_start,
+                )
+            )
+        elif (
+            range[0]
+            <= mapping.from_start
+            <= range[1]
+            <= mapping.from_start + mapping.length
+        ):
+            mapped_ranges.add(
+                (mapping.to_start, (range[1] - mapping.from_start) + mapping.to_start)
+            )
+        elif (
+            mapping.from_start
+            <= range[0]
+            <= mapping.from_start + mapping.length
+            <= range[1]
+        ):
+            mapped_ranges.add(
+                (
+                    (range[0] - mapping.from_start) + mapping.to_start,
+                    mapping.to_start + mapping.length,
+                )
+            )
+        elif (
+            range[0]
+            <= mapping.from_start
+            <= mapping.from_start + mapping.length
+            <= range[1]
+        ):
+            mapped_ranges.add(
+                (
+                    mapping.to_start,
+                    mapping.to_start + mapping.length,
+                )
             )
 
-    return intersection
+    return mapped_ranges
 
 
-def map_range(map: set[Mapping], start: int, end: int):
-    ranges = set()
-    for mapping in map:
-        mapped_start = mapping.to_start + (start - mapping.from_start)
-        mapped_end = mapping.to_start + (end - mapping.from_start)
-        if mapping.from_start <= start <= end <= mapping.from_start + mapping.length:
-            # range entirely contained within mapping
-            ranges.add((mapped_start, mapped_end))
-        elif mapping.from_start <= start <= mapping.from_start + mapping.length <= end:
-            # range extends to the right of the mapping
-            ranges.add((mapped_start, mapping.to_start + mapping.length))
-        elif start <= mapping.from_start <= end <= mapping.from_start + mapping.length:
-            # range extends to the left of the mapping
-            ranges.add((mapping.to_start, mapped_end))
-    # TODO: what about the mapping not in range?
+def map_ranges(
+    map: set[Mapping], ranges: set[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    result_ranges = set()
+    for range in ranges:
+        result_ranges.update(map_range(map, range))
 
-    return ranges
+    return compute_union(result_ranges)
 
 
-def perform_mappings(maps: list[set[Mapping]], start: int, end: int):
-    ranges = [(start, end)]
+def full_map_ranges(maps: list[set[Mapping]], ranges: set[tuple[int, int]]):
+    ranges_list = compute_union(ranges)
+
     for map in maps:
-        new_ranges = []
-        for range in ranges:
-            new_ranges += map_range(map, range[0], range[1])
-        ranges = new_ranges
-    return ranges
+        print(ranges_list)
+        ranges_list = map_ranges(map, set(ranges_list))
+
+    return ranges_list
 
 
-print(perform_mappings(maps, 79, 79 + 14))
+def main():
+    seeds_ranges, maps = parse_input()
+    results = full_map_ranges(maps, seeds_ranges)
+    print(results[0][0])
+
+
+main()
