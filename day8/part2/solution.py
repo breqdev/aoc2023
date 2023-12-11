@@ -1,4 +1,5 @@
 import itertools
+import math
 
 with open("input.txt") as f:
     instructions, _, *node_strs = f.readlines()
@@ -15,16 +16,20 @@ print(nodes)
 
 instructions = instructions.strip()
 
-current_nodes = [node for node in nodes if node.endswith("A")]
+start_nodes = [node for node in nodes if node.endswith("A")]
 
-for i in itertools.count():
-    instruction = instructions[i % len(instructions)]
-    if instruction == "L":
-        current_nodes = [nodes[node][0] for node in current_nodes]
-    elif instruction == "R":
-        current_nodes = [nodes[node][1] for node in current_nodes]
-    # print(node)
-    if all(node.endswith("Z") for node in current_nodes):
-        break
 
-print(i + 1)
+def get_period(node: str) -> int:
+    for i in itertools.count():
+        instruction = instructions[i % len(instructions)]
+        if instruction == "L":
+            node = nodes[node][0]
+        elif instruction == "R":
+            node = nodes[node][1]
+        if node.endswith("Z"):
+            break
+
+    return i + 1
+
+
+print(math.lcm(*(get_period(node) for node in start_nodes)))
